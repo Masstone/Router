@@ -1,0 +1,148 @@
+#!/bin/sh
+
+CLASH="/opt/app/clash/clash"
+CLASH_CONFIG="/opt/app/clash"
+CLASH_LOG="/opt/app/clash/logs/clash_`date +%Y_%m_%d_%H`.log"
+
+LAN_IP=192.168.123.1
+CLASH_DNS_PORT=5353
+LAN_IP_CIDR=$LAN_IP,0.0.0.0/8,10.0.0.0/8,100.64.0.0/10,127.0.0.0/8,169.254.0.0/16,172.16.0.0/12,192.168.0.0/16,224.0.0.0/4,240.0.0.0/4
+CLASH_REDIR_PORT=7892
+
+enable_nat_rules() {
+	#创建nat表
+	iptables -t nat -N CLASH
+	iptables -t nat -N CLASH_DNS
+	#设置表规则
+	iptables -t nat -A CLASH_DNS -p udp --dport 53 -d 198.19.0.0/24 -j DNAT --to-destination $LAN_IP:$CLASH_DNS_PORT
+    iptables -t nat -A CLASH_DNS -p tcp --dport 53 -d 198.19.0.0/24 -j DNAT --to-destination $LAN_IP:$CLASH_DNS_PORT
+
+    #iptables -t nat -A CLASH -p udp --dport 53 -d $LAN_IP -j REDIRECT --to-ports $CLASH_DNS_PORT
+    #iptables -t nat -A CLASH -p tcp --dport 53 -d $LAN_IP -j REDIRECT --to-ports $CLASH_DNS_PORT
+
+	# IP Whitelist 包括路由器本机 IP
+    iptables -t nat -A CLASH -d $LAN_IP_CIDR -j ACCEPT
+	# Free 22 SSH
+    iptables -t nat -A CLASH -p tcp --dport 22 -d $LAN_IP -j ACCEPT
+	# Redirect all tcp traffic to CLASH_REDIR_PORT
+	iptables -t nat -A CLASH -p tcp -j REDIRECT --to-ports $CLASH_REDIR_PORT
+
+	#应用nat表
+    iptables -t nat -A PREROUTING -p tcp --dport 53 -d 198.19.0.0/24 -j CLASH_DNS
+    iptables -t nat -A PREROUTING -p udp --dport 53 -d 198.19.0.0/24 -j CLASH_DNS
+	iptables -t nat -A PREROUTING -p tcp -j CLASH
+
+    echo 'Nat rules for Clash enabled'
+}
+
+disable_nat_rules() {
+
+    iptables -t nat -D PREROUTING -p tcp -j CLASH >/dev/null 2>&1
+    iptables -t nat -D PREROUTING -p tcp -j CLASH_DNS >/dev/null 2>&1
+    iptables -t nat -D PREROUTING -p udp -j CLASH_DNS >/dev/null 2>&1
+
+	nat_indexs=$(iptables -nvL PREROUTING -t nat | sed 1,2d | sed -n '/CLASH/=' | sort -r)
+    for nat_index in $nat_indexs; do 
+	iptables -t nat -D PREROUTING $nat_index >/dev/null 2>&1
+    done
+	
+	sleep 1
+
+    iptables -t nat -F CLASH >/dev/null 2>&1 && iptables -t nat -X CLASH >/dev/null 2>&1
+    iptables -t nat -F CLASH_DNS >/dev/null 2>&1 && iptables -t nat -X CLASH_DNS >/dev/null 2>&1
+
+    echo 'Nat rules for Clash disabled'
+}
+
+clash_start() {
+	# 启动 Clash
+	$CLASH -d "$CLASH_CONFIG" >> "$CLASH_LOG" 2>&1  &
+	echo "clash start running"
+	sleep 2
+}
+
+clash_stop() {
+	disable_nat_rules
+	# 关闭 Clash
+	kill -9 `pidof clash|sed "s/$//g"` 2>/dev/null
+	# kill -9 $pid 2>/dev/null
+	echo "clash stopping"
+}
+case "$1" in
+	enable)
+	enable_nat_rules
+	;;
+	disable)
+	disable_nat_rules
+	;;
+	start)
+	clash_start
+	sleep 1
+	pid=`pidof clash|sed "s/$//g"`
+	if [ "${pid}" != "" ];
+	then
+		echo "clash is running."
+		enable_nat_rules
+	else
+		echo "clash run failed."
+	fi
+	;;
+	stop)
+	clash_stop
+	sleep 1
+	pid=`pidof clash|sed "s/$//g"`
+	if [ "${pid}" == "" ];
+	then
+		echo "clash stoped."
+	else
+		echo "clash stop failed."
+	fi
+	;;
+	restart)
+	$0 stop
+	$0 start
+	;;
+	status_thread)
+	pid=`pidof clash|sed "s/$//g"`
+	if [ "${pid}" != "" ];
+	then
+		echo "clash is running."
+	else
+		echo "clash is not running !!!"
+	fi
+	;;
+	status_iptables)
+	nat_indexs=$(iptables -nvL PREROUTING -t nat | sed 1,2d | sed -n '/CLASH/=' | sort -r)
+	if [ "${nat_indexs}" != "" ];
+	then
+		echo "clash nat rules in effect."
+	else
+		echo "clash nat rules not effective !!!"
+	fi
+	;;
+	status)
+	$0 status_thread
+	$0 status_iptables
+	;;
+	deamon)
+	pid=`pidof clash|sed "s/$//g"`
+	if [ "${pid}" != "" ];
+	then
+		echo "clash is running."
+	else
+		$0 start
+		$0 status_thread
+	fi
+	nat_indexs=$(iptables -nvL PREROUTING -t nat | sed 1,2d | sed -n '/CLASH/=' | sort -r)
+	if [ "${nat_indexs}" != "" ];
+	then
+		echo "clash nat rules in effect."
+	else
+		$0 enable
+		$0 status_iptables
+	fi
+	;;
+	*)
+	$0 status
+	;;
+esac

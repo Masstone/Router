@@ -1,0 +1,28 @@
+#!/bin/sh
+
+### Custom user script for post-update iptables
+### This script auto called after internal firewall restart
+### First param is:
+###  "start" (call at start optware),
+###  "stop" (call before stop optware),
+###  "update" (call after internal firewall restart).
+### Include you custom rules for iptables below:
+CLASH=/opt/etc/init.d/clash
+case "$1" in
+start|update)
+	# add iptables custom rules
+	$CLASH enable
+	logger -t "【Clash】" "iptables：`$CLASH status_iptables`"
+	echo "firewall started"
+	;;
+stop)
+	# delete iptables custom rules
+	$CLASH disable 
+	logger -t "【Clash】" "iptables：`$CLASH status_iptables`"
+	echo "firewall stopped"
+	;;
+*)
+	echo "Usage: $0 {start|stop|update}"
+	exit 1
+	;;
+esac

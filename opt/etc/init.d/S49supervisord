@@ -1,0 +1,103 @@
+# Supervisord auto-start
+#
+# description: Auto-starts supervisord
+# processname: supervisord
+# pidfile: /var/run/supervisord.pid
+
+PATH=/sbin:/usr/sbin:/bin:/usr/bin
+NAME=supervisord
+DESC="supervisor is a system for controlling process state"
+SUPERVISORD=/opt/bin/supervisord
+SUPERVISORCTL=/opt/bin/supervisorctl
+SCRIPTNAME=/opt/etc/init.d/S49$NAME
+
+do_start()
+{
+    # Return
+    #   0 if daemon has been started
+    #   1 if daemon was already running
+    #   2 if daemon could not be started
+
+    if $SUPERVISORCTL status | grep -q "unix:///opt/app/supervisor/supervisor.sock"; then 
+        logger -t "【Supervisord】" "开始启动"
+        $SUPERVISORD > /dev/null 2>&1
+        echo "supervisord started successfully"
+        logger -t "【Supervisord】" "supervisord started successfully"
+        return 0
+    fi
+
+    if $SUPERVISORCTL status | grep -qv "unix:///opt/app/supervisor/supervisor.sock"; then
+        echo "supervisord is already running"
+        return 1
+    fi
+
+    echo "could not start supervisord"
+    return 2
+}
+
+do_stop() {
+    # Return
+    #   0 if daemon has been stopped
+    #   1 if daemon was already stopped
+    #   2 if daemon could not be stopped
+    #   other if a failure occurred
+    if $SUPERVISORCTL status | grep -q "unix:///opt/app/supervisor/supervisor.sock no such file"; then
+        echo "supervisord already stopped"
+        return 1
+    else
+        if $SUPERVISORCTL shutdown | grep -q "Shut down"; then
+            while $SUPERVISORCTL shutdown | grep -qv "already shut down"
+            do
+                sleep 1
+            done
+            echo 'supervisor shutdown successfully'
+            return 0
+        else
+            echo "could not stop supervisord"
+            return 2
+        fi
+    fi
+}
+
+do_status() {
+    $SUPERVISORCTL status; 
+}
+
+case "$1" in
+	start)
+    echo "Starting $NAME" 
+    echo "$DESC"
+    do_start
+    ;;
+	stop)
+    echo "Stopping $NAME"
+    do_stop
+    ;;
+	status)
+    do_status
+    exit $?
+    ;;
+	restart|force-reload)
+    #
+    # If the "reload" option is implemented then remove the
+    # 'force-reload' alias
+    #
+    echo "Restarting $NAME"
+    do_stop
+    case "$?" in
+	0|1)
+        do_start
+        ;;
+      *)
+        echo "Failed to stop"
+        return 1
+        ;;
+    esac
+    ;;
+  *)
+    echo "Usage: $SCRIPTNAME {start|stop|status|restart|force-reload}" >&2
+    exit 3
+    ;;
+esac
+
+:
